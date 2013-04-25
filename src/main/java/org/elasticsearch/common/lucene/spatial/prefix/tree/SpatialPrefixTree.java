@@ -147,48 +147,31 @@ public abstract class SpatialPrefixTree {
 
   private void recursiveGetNodes(Node node, Shape shape, int detailLevel, boolean inclParents,
                                  Collection<Node> result) {
-    if (node.isLeaf()) {//cell is within shape
+    if (node.getLevel() == detailLevel) {
       result.add(node);
       return;
     }
+
+    if (inclParents) {
+      result.add(node);
+    }
     final Collection<Node> subCells = node.getSubCells(shape);
-    if (node.getLevel() == detailLevel - 1) {
-      if (subCells.size() == node.getSubCellsSize() && !inclParents) {
-        // A bottom level (i.e. detail level) optimization where all boxes intersect, so use parent cell.
-        // Can optimize at only one of index time or query/filter time; the !inclParents
-        // condition above means we do not optimize at index time.
-        node.setLeaf();
-        result.add(node);
-      } else {
-        if (inclParents)
-          result.add(node);
-        for (Node subCell : subCells) {
-          subCell.setLeaf();
-        }
-        result.addAll(subCells);
-      }
-    } else {
-      if (inclParents) {
-        result.add(node);
-      }
-      for (Node subCell : subCells) {
-        recursiveGetNodes(subCell, shape, detailLevel, inclParents, result);//tail call
-      }
+    for (Node subCell : subCells) {
+      recursiveGetNodes(subCell, shape, detailLevel, inclParents, result);//tail call
     }
   }
 
   private void recursiveGetNodes(Node node, Point point, int detailLevel, boolean inclParents,
                                  Collection<Node> result) {
+    if (node.getLevel() == detailLevel) {
+      result.add(node);
+      return;
+    }
     if (inclParents) {
       result.add(node);
     }
     final Node pCell = node.getSubCell(point);
-    if (node.getLevel() == detailLevel - 1) {
-      pCell.setLeaf();
-      result.add(pCell);
-    } else {
-      recursiveGetNodes(pCell, point, detailLevel, inclParents, result);//tail call
-    }
+    recursiveGetNodes(pCell, point, detailLevel, inclParents, result);//tail call
   }
 
   /**
@@ -214,17 +197,13 @@ public abstract class SpatialPrefixTree {
   }
 
   /**
-   * Will add the trailing leaf byte for leaves. This isn't particularly efficient.
+   * This isn't particularly efficient.
    */
   public static List<String> nodesToTokenStrings(Collection<Node> nodes) {
     List<String> tokens = new ArrayList<String>((nodes.size()));
     for (Node node : nodes) {
       final String token = node.getTokenString();
-      if (node.isLeaf()) {
-        tokens.add(token + (char) Node.LEAF_BYTE);
-      } else {
-        tokens.add(token);
-      }
+      tokens.add(token);
     }
     return tokens;
   }

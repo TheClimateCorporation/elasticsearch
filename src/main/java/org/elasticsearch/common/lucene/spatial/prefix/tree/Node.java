@@ -32,11 +32,8 @@ import java.util.List;
  * @lucene.experimental
  */
 public abstract class Node implements Comparable<Node> {
-  public static final byte LEAF_BYTE = '+';//NOTE: must sort before letters & numbers
-
   /*
   Holds a byte[] and/or String representation of the cell. Both are lazy constructed from the other.
-  Neither contains the trailing leaf byte.
    */
   private byte[] bytes;
   private int b_off;
@@ -44,16 +41,11 @@ public abstract class Node implements Comparable<Node> {
 
   private String token;//this is the only part of equality
 
-  protected SpatialRelation shapeRel;//set in getSubCells(filter), and via setLeaf().
   private SpatialPrefixTree spatialPrefixTree;
 
   protected Node(SpatialPrefixTree spatialPrefixTree, String token) {
     this.spatialPrefixTree = spatialPrefixTree;
     this.token = token;
-    if (token.length() > 0 && token.charAt(token.length() - 1) == (char) LEAF_BYTE) {
-      this.token = token.substring(0, token.length() - 1);
-      setLeaf();
-    }
 
     if (getLevel() == 0)
       getShape();//ensure any lazy instantiation completes to make this threadsafe
@@ -64,44 +56,16 @@ public abstract class Node implements Comparable<Node> {
     this.bytes = bytes;
     this.b_off = off;
     this.b_len = len;
-    b_fixLeaf();
   }
 
   public void reset(byte[] bytes, int off, int len) {
     assert getLevel() != 0;
     token = null;
-    shapeRel = null;
     this.bytes = bytes;
     this.b_off = off;
     this.b_len = len;
-    b_fixLeaf();
   }
 
-  private void b_fixLeaf() {
-    if (bytes[b_off + b_len - 1] == LEAF_BYTE) {
-      b_len--;
-      setLeaf();
-    } else if (getLevel() == spatialPrefixTree.getMaxLevels()) {
-      setLeaf();
-    }
-  }
-
-  public SpatialRelation getShapeRel() {
-    return shapeRel;
-  }
-
-  public boolean isLeaf() {
-    return shapeRel == SpatialRelation.WITHIN;
-  }
-
-  public void setLeaf() {
-    assert getLevel() != 0;
-    shapeRel = SpatialRelation.WITHIN;
-  }
-
-  /**
-   * Note: doesn't contain a trailing leaf byte.
-   */
   public String getTokenString() {
     if (token == null) {
       token = new String(bytes, b_off, b_len, SpatialPrefixTree.UTF8);
@@ -109,9 +73,6 @@ public abstract class Node implements Comparable<Node> {
     return token;
   }
 
-  /**
-   * Note: doesn't contain a trailing leaf byte.
-   */
   public byte[] getTokenBytes() {
     if (bytes != null) {
       if (b_off != 0 || b_len != bytes.length) {
@@ -145,21 +106,18 @@ public abstract class Node implements Comparable<Node> {
     if (shapeFilter instanceof Point) {
       return Collections.singleton(getSubCell((Point) shapeFilter));
     }
-    Collection<Node> cells = getSubCells();
+    Collection<Node> subCells = getSubCells();
 
     if (shapeFilter == null) {
-      return cells;
+      return subCells;
     }
-    List<Node> copy = new ArrayList<Node>(cells.size());//copy since cells contractually isn't modifiable
-    for (Node cell : cells) {
+    List<Node> copy = new ArrayList<Node>(subCells.size());//copy since cells contractually isn't modifiable
+    for (Node cell : subCells) {
       SpatialRelation rel = cell.getShape().relate(shapeFilter);
-      if (rel == SpatialRelation.DISJOINT)
-        continue;
-      cell.shapeRel = rel;
-      copy.add(cell);
+      if (rel != SpatialRelation.DISJOINT)
+        copy.add(cell);
     }
-    cells = copy;
-    return cells;
+    return copy;
   }
 
   /**
@@ -208,7 +166,7 @@ public abstract class Node implements Comparable<Node> {
 
   @Override
   public String toString() {
-    return getTokenString() + (isLeaf() ? (char) LEAF_BYTE : "");
+    return getTokenString();
   }
 
 }

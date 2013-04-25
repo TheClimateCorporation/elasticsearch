@@ -31,6 +31,7 @@ import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
+import static org.elasticsearch.common.geo.ShapeBuilder.newPoint;
 import static org.elasticsearch.common.geo.ShapeBuilder.newRectangle;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import static org.elasticsearch.index.query.FilterBuilders.geoShapeFilter;
@@ -67,6 +68,7 @@ public class GeoShapeIntegrationTests extends AbstractNodesTests {
                 .startObject("properties").startObject("location")
                 .field("type", "geo_shape")
                 .field("tree", "quadtree")
+                .field("tree_levels", 8) // avoid TooManyClauses
                 .endObject().endObject()
                 .endObject().endObject().string();
         client.admin().indices().prepareCreate("test").addMapping("type1", mapping).execute().actionGet();
@@ -90,7 +92,7 @@ public class GeoShapeIntegrationTests extends AbstractNodesTests {
 
         client.admin().indices().prepareRefresh().execute().actionGet();
 
-        Shape shape = newRectangle().topLeft(-45, 45).bottomRight(45, -45).build();
+        Shape shape = newRectangle().topLeft(-45, -29).bottomRight(-29, -45).build();
 
         SearchResponse searchResponse = client.prepareSearch()
                 .setQuery(filteredQuery(matchAllQuery(),
@@ -111,7 +113,7 @@ public class GeoShapeIntegrationTests extends AbstractNodesTests {
     }
 
     @Test
-    public void testEdgeCases() throws Exception {
+    public void testIssue2626() throws Exception {
         client.admin().indices().prepareDelete().execute().actionGet();
 
         String mapping = XContentFactory.jsonBuilder().startObject().startObject("type1")
@@ -153,6 +155,124 @@ public class GeoShapeIntegrationTests extends AbstractNodesTests {
     }
 
     @Test
+    public void testIntersectionWhenQueryWithinDoc() throws Exception {
+        client.admin().indices().prepareDelete().execute().actionGet();
+
+        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type1")
+                .startObject("properties").startObject("location")
+                .field("type", "geo_shape")
+                .field("tree", "quadtree")
+                .field("tree_levels", 14)
+                .endObject().endObject()
+                .endObject().endObject().string();
+        client.admin().indices().prepareCreate("test").addMapping("type1", mapping).execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+
+        client.prepareIndex("test", "type1", "champaign").setSource(jsonBuilder().startObject()
+                .field("name", "Champaign County")
+                .startObject("location")
+                .field("type", "polygon")
+                .startArray("coordinates").startArray()
+                .startArray().value(-88.461).value(40.400).endArray()
+                .startArray().value(-87.917).value(40.404).endArray()
+                .startArray().value(-87.927).value(39.869).endArray()
+                .startArray().value(-88.469).value(39.874).endArray()
+                .startArray().value(-88.461).value(40.400).endArray() // close the polygon
+                .endArray().endArray()
+                .endObject()
+                .endObject()).execute().actionGet();
+
+        client.admin().indices().prepareRefresh().execute().actionGet();
+
+
+        // Point within big doc.
+        Shape query = newPoint(-88.31, 40.05);
+
+        SearchResponse searchResponse = client.prepareSearch()
+                .setQuery(filteredQuery(matchAllQuery(),
+                        geoShapeFilter("location", query).relation(ShapeRelation.INTERSECTS)))
+                .execute().actionGet();
+
+        assertThat(searchResponse.hits().getTotalHits(), equalTo(1l));
+        assertThat(searchResponse.hits().hits().length, equalTo(1));
+        assertThat(searchResponse.hits().getAt(0).id(), equalTo("champaign"));
+
+        // Small rectangle within big doc.
+        query = newRectangle().topLeft(-88.35739,40.05).bottomRight(-88.31,40.04).build();
+
+        searchResponse = client.prepareSearch()
+                .setQuery(filteredQuery(matchAllQuery(),
+                        geoShapeFilter("location", query).relation(ShapeRelation.INTERSECTS)))
+                .execute().actionGet();
+
+        assertThat(searchResponse.hits().getTotalHits(), equalTo(1l));
+        assertThat(searchResponse.hits().hits().length, equalTo(1));
+        assertThat(searchResponse.hits().getAt(0).id(), equalTo("champaign"));
+
+        // big rectangle roughly over big doc. (ensure not too many query clauses)
+        query = newRectangle().topLeft(-90, 40).bottomRight(-85, 35).build();
+
+        searchResponse = client.prepareSearch()
+                .setQuery(filteredQuery(matchAllQuery(),
+                        geoShapeFilter("location", query).relation(ShapeRelation.INTERSECTS)))
+                .execute().actionGet();
+
+        assertThat(searchResponse.hits().getTotalHits(), equalTo(1l));
+        assertThat(searchResponse.hits().hits().length, equalTo(1));
+        assertThat(searchResponse.hits().getAt(0).id(), equalTo("champaign"));
+    }
+
+    @Test
+    public void testIntersectionWhenDocWithinQuery() throws Exception {
+        client.admin().indices().prepareDelete().execute().actionGet();
+
+        String mapping = XContentFactory.jsonBuilder().startObject().startObject("type1")
+                .startObject("properties").startObject("location")
+                .field("type", "geo_shape")
+                .field("tree", "quadtree")
+                .field("tree_levels", 14)
+                .endObject().endObject()
+                .endObject().endObject().string();
+        client.admin().indices().prepareCreate("test").addMapping("type1", mapping).execute().actionGet();
+        client.admin().cluster().prepareHealth().setWaitForGreenStatus().execute().actionGet();
+
+        client.prepareIndex("test", "type1", "doc1").setSource(jsonBuilder().startObject()
+                .field("name", "Staley Road")
+                .startObject("location")
+                .field("type", "Point")
+                .startArray("coordinates").value(-88.31).value(40.05).endArray()
+                .endObject()
+                .endObject()).execute().actionGet();
+
+        client.admin().indices().prepareRefresh().execute().actionGet();
+
+
+        // Big query around point doc.
+        Shape query = newRectangle().topLeft(-88.461, 40.400).bottomRight(-87.927, 39.869).build();
+
+        SearchResponse searchResponse = client.prepareSearch()
+                .setQuery(filteredQuery(matchAllQuery(),
+                        geoShapeFilter("location", query).relation(ShapeRelation.INTERSECTS)))
+                .execute().actionGet();
+
+        assertThat(searchResponse.hits().getTotalHits(), equalTo(1l));
+        assertThat(searchResponse.hits().hits().length, equalTo(1));
+        assertThat(searchResponse.hits().getAt(0).id(), equalTo("doc1"));
+
+        // point on point
+        query = newPoint(-88.31, 40.05);
+
+        searchResponse = client.prepareSearch()
+                .setQuery(filteredQuery(matchAllQuery(),
+                        geoShapeFilter("location", query).relation(ShapeRelation.INTERSECTS)))
+                .execute().actionGet();
+
+        assertThat(searchResponse.hits().getTotalHits(), equalTo(1l));
+        assertThat(searchResponse.hits().hits().length, equalTo(1));
+        assertThat(searchResponse.hits().getAt(0).id(), equalTo("doc1"));
+    }
+
+    @Test
     public void testIndexedShapeReference() throws Exception {
         client.admin().indices().prepareDelete().execute().actionGet();
 
@@ -160,6 +280,7 @@ public class GeoShapeIntegrationTests extends AbstractNodesTests {
                 .startObject("properties").startObject("location")
                 .field("type", "geo_shape")
                 .field("tree", "quadtree")
+                .field("tree_levels", 5) // avoid TooManyClauses
                 .endObject().endObject()
                 .endObject().endObject().string();
         client.admin().indices().prepareCreate("test").addMapping("type1", mapping).execute().actionGet();

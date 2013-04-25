@@ -183,19 +183,15 @@ public class QuadPrefixTree extends SpatialPrefixTree {
     int strlen = str.length();
     Rectangle rectangle = ctx.makeRectangle(cx - w, cx + w, cy - h, cy + h);
     SpatialRelation v = shape.relate(rectangle);
-    if (SpatialRelation.CONTAINS == v) {
-      str.append(c);
-      //str.append(SpatialPrefixGrid.COVER);
-      matches.add(new QuadCell(str.toString(), v.transpose()));
-    } else if (SpatialRelation.DISJOINT == v) {
+    if (SpatialRelation.DISJOINT == v) {
       // nothing
-    } else { // SpatialRelation.WITHIN, SpatialRelation.INTERSECTS
+    } else { // SpatialRelation.WITHIN, SpatialRelation.INTERSECTS, CONTAINS
       str.append(c);
 
       int nextLevel = level + 1;
       if (nextLevel >= maxLevel) {
         //str.append(SpatialPrefixGrid.INTERSECTS);
-        matches.add(new QuadCell(str.toString(), v.transpose()));
+        matches.add(new QuadCell(str.toString()));
       } else {
         build(cx, cy, nextLevel, matches, str, shape, maxLevel);
       }
@@ -207,11 +203,6 @@ public class QuadPrefixTree extends SpatialPrefixTree {
 
     public QuadCell(String token) {
       super(QuadPrefixTree.this, token);
-    }
-
-    public QuadCell(String token, SpatialRelation shapeRel) {
-      super(QuadPrefixTree.this, token);
-      this.shapeRel = shapeRel;
     }
 
     QuadCell(byte[] bytes, int off, int len) {
